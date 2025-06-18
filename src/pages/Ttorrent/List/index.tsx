@@ -17,6 +17,9 @@ import {
 import type { UploadProps } from 'antd';
 import { request } from '@umijs/max';
 
+//上传种子
+import { useModel } from '@umijs/max';
+
 interface SeedItem {
   id: number;
   name: string;
@@ -29,25 +32,32 @@ interface SeedItem {
 }
 // 定义分类映射
 const categoryMap: Record<number, string> = {
-  1: '影视',
-  2: '音乐',
-  3: '图书',
-  4: '图片',
-  5: '其他',
+  0: '影视',
+  1: '音乐',
+  2: '图书',
+  3: '图片',
+  4: '其他',
 };
 const SeedList: React.FC = () => {
+  const { initialState } = useModel('@@initialState');
+  const user = initialState?.currentUser;
   const [data, setData] = useState<SeedItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [form] = Form.useForm();
-  const [category, setCategory] = useState<string | undefined>(undefined);
+  const [category, setCategory] = useState<string | undefined>("-1"); // 默认值为 -1，表示全部
+  const [searchKeyword, setSearchKeyword] = useState<string | undefined>(undefined);
 
-  const fetchData = async (category?: string) => {
+  const fetchData = async (category?: string, keyword?: string) => {
     setLoading(true);
     try {
       const res = await request('/api/torrent/list', {
         method: 'GET',
-        params: category ? { category } : {},
+        params: {
+          ...(category ? { category } : {}),
+          ...(keyword ? { name: keyword } : {}),
+        }
+
       });
       setData(res.data || []);
     } catch (err) {
@@ -61,24 +71,21 @@ const SeedList: React.FC = () => {
     fetchData();
   }, []);
 
-  const handleDownload = (fileUrl: string) => {
-    window.open(fileUrl, '_blank');
-  };
-
+//上传种子相关逻辑
   const handleUpload = async (values: any) => {
     try {
       const formData = new FormData();
-      formData.append('name', values.name);
+      formData.append('author', user?.userName || '');
+      formData.append('creatorId', user?.userId?.toString() || '');
       formData.append('category', values.category);
-      formData.append('author', values.author);
-      formData.append('file', values.file.file);
+      formData.append('file', values.file);
 
-      await request('/api/seeds/upload', {
+      await request('/api/torrent/upload', {
         method: 'POST',
         data: formData,
         requestType: 'form',
       });
-
+      window.location.href = '/api/torrent/upload'; // 自动下载最新上传的种子
       message.success('上传成功');
       setUploadModalVisible(false);
       form.resetFields();
@@ -91,6 +98,10 @@ const SeedList: React.FC = () => {
   const handleCategoryChange = (value: string | undefined) => {
     setCategory(value);
     fetchData(value);
+  };
+
+  const handleDownload = (id: number) => {
+    window.location.href = `/api/torrent/download/${id}`;
   };
 
   const columns = [
@@ -112,10 +123,6 @@ const SeedList: React.FC = () => {
       dataIndex: 'createdTime',
     },
     {
-      title: '最后活跃',
-      dataIndex: 'lastActive',
-    },
-    {
       title: '做种数',
       dataIndex: 'seederCount',
     },
@@ -125,7 +132,7 @@ const SeedList: React.FC = () => {
         <Button
           type="link"
           icon={<DownloadOutlined />}
-          onClick={() => handleDownload(`/api/torrent/download/${record.id}`)}
+          onClick={() => handleDownload(record.id)}
         >
           下载
         </Button>
@@ -133,36 +140,33 @@ const SeedList: React.FC = () => {
     },
   ];
 
+
+
+
   // 制作种子相关逻辑
   const [makeModalVisible, setMakeModalVisible] = useState(false);
   const [makeForm] = Form.useForm();
   const handleMakeTorrent = async (values: any) => {
+
     try {
       const formData = new FormData();
-      formData.append('name', values.name);
       formData.append('category', values.category);
-      formData.append('author', values.author);
-      formData.append('file', values.sourceFile.file);
+      formData.append('author', user?.userName || '');
+      formData.append('creatorId', user?.userId?.toString() || '');
 
-      const res = await request('/api/seeds/make', {
+      formData.append('sourcePath', values.sourcePath);
+
+      const res = await request('/api/torrent/make', {
         method: 'POST',
         data: formData,
         requestType: 'form',
       });
-
-      if (res && res.torrentUrl) {
-        message.success('种子制作成功，开始下载');
-        window.open(res.torrentUrl, '_blank'); // 自动打开下载
-        setMakeModalVisible(false);
-        makeForm.resetFields();
-        fetchData(category);
-      } else {
-        throw new Error('接口未返回种子链接');
-      }
+      message.success('种子制作成功，保存路径为原路径下的.torrent文件');
     } catch (err) {
       message.error('种子制作失败');
     }
   };
+
 
   return (
     <>
@@ -172,14 +176,29 @@ const SeedList: React.FC = () => {
           allowClear
           style={{ width: 200 }}
           value={category}
-          onChange={handleCategoryChange}
+          onChange={(value) => {
+             console.log("选择分类:", value); // 
+            setCategory(value);
+            fetchData(value, searchKeyword);
+            console.log("searchKeyword:", searchKeyword);
+          }}
           options={[
-            { label: '影视', value: '影视' },
-            { label: '音乐', value: '音乐' },
-            { label: '图书', value: '图书' },
-            { label: '图片', value: '图片' },
-            { label: '其他', value: '其他' },
+            { label: '全部', value: '-1' },
+            { label: '影视', value: '0' },
+            { label: '音乐', value: '1' },
+            { label: '图书', value: '2' },
+            { label: '图片', value: '3' },
+            { label: '其他', value: '4' },
           ]}
+        />
+        <Input.Search
+          placeholder="搜索种子名称"
+          style={{ width: 240 }}
+          allowClear
+          onSearch={(value) => {
+            setSearchKeyword(value);
+            fetchData(category, value);
+          }}
         />
         <Button
           type="primary"
@@ -202,7 +221,7 @@ const SeedList: React.FC = () => {
         columns={columns}
         dataSource={data}
       />
-
+      {/* 上传种子文件 */}
       <Modal
         title="上传种子文件"
         open={uploadModalVisible}
@@ -210,13 +229,6 @@ const SeedList: React.FC = () => {
         onOk={() => form.submit()}
       >
         <Form form={form} onFinish={handleUpload} layout="vertical">
-          <Form.Item
-            label="种子名称"
-            name="name"
-            rules={[{ required: true }]}
-          >
-            <Input placeholder="请输入种子名称" />
-          </Form.Item>
 
           <Form.Item
             label="分类"
@@ -226,10 +238,11 @@ const SeedList: React.FC = () => {
             <Select
               placeholder="选择分类"
               options={[
-                { label: '影视', value: '影视' },
-                { label: '音乐', value: '音乐' },
-                { label: '图书', value: '图书' },
-                { label: '图片', value: '图片' },
+                { label: '影视', value: '0' },
+                { label: '音乐', value: '1' },
+                { label: '图书', value: '2' },
+                { label: '图片', value: '3' },
+                { label: '其他', value: '4' },
               ]}
             />
           </Form.Item>
@@ -238,7 +251,7 @@ const SeedList: React.FC = () => {
             name="file"
             valuePropName="file"
             getValueFromEvent={(e) =>
-              Array.isArray(e) ? e : e && e.fileList[0]
+              Array.isArray(e) ? e : e && e.fileList[0]?.originFileObj
             }
             rules={[{ required: true, message: '请上传文件' }]}
           >
@@ -258,14 +271,6 @@ const SeedList: React.FC = () => {
       >
         <Form form={makeForm} onFinish={handleMakeTorrent} layout="vertical">
           <Form.Item
-            label="种子名称"
-            name="name"
-            rules={[{ required: true }]}
-          >
-            <Input placeholder="请输入种子名称" />
-          </Form.Item>
-
-          <Form.Item
             label="分类"
             name="category"
             rules={[{ required: true, message: '请选择分类' }]}
@@ -273,35 +278,21 @@ const SeedList: React.FC = () => {
             <Select
               placeholder="选择分类"
               options={[
-                { label: '影视', value: '影视' },
-                { label: '音乐', value: '音乐' },
-                { label: '图书', value: '图书' },
-                { label: '图片', value: '图片' },
-                { label: '其他', value: '其他' },
+                { label: '影视', value: '0' },
+                { label: '音乐', value: '1' },
+                { label: '图书', value: '2' },
+                { label: '图片', value: '3' },
+                { label: '其他', value: '4' },
               ]}
             />
           </Form.Item>
 
           <Form.Item
-            label="作者"
-            name="author"
-            rules={[{ required: true, message: '请输入作者' }]}
+            label="源文件路径"
+            name="sourcePath"
+            rules={[{ required: true }]}
           >
-            <Input placeholder="请输入作者名称" />
-          </Form.Item>
-
-          <Form.Item
-            label="选择源文件"
-            name="sourceFile"
-            valuePropName="file"
-            getValueFromEvent={(e) =>
-              Array.isArray(e) ? e : e && e.fileList[0]
-            }
-            rules={[{ required: true, message: '请上传源文件' }]}
-          >
-            <Upload beforeUpload={() => false} maxCount={1}>
-              <Button icon={<UploadOutlined />}>选择文件</Button>
-            </Upload>
+            <Input placeholder="请输入源文件路径" />
           </Form.Item>
         </Form>
       </Modal>
